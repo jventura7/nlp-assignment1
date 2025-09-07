@@ -1,9 +1,13 @@
 # models.py
 
+import nltk
+import numpy as np
+from nltk.corpus import stopwords
 from sentiment_data import *
 from utils import *
-
 from collections import Counter
+
+nltk.download('stopwords')
 
 class FeatureExtractor(object):
     """
@@ -24,21 +28,45 @@ class FeatureExtractor(object):
         """
         raise Exception("Don't call me, call my subclasses")
 
-
+# Takes in a sentence like ["I", "love", "this", "movie", "it", "was", "a", "great", "movie"] 
+# and returns a feature vector like Counter({0: 1, 1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}) 
+# where the keys are the indices of the features in the indexer and the values are the counts of those features in the sentence.
+# The indexer will have keys like "Unigram:I", "Unigram:love", "Unigram:this", ...
+# and the corresponding indices will be the values in the Counter returned by extract_features.
 class UnigramFeatureExtractor(FeatureExtractor):
     """
     Extracts unigram bag-of-words features from a sentence. It's up to you to decide how you want to handle counts
     and any additional preprocessing you want to do.
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
-
+        self.indexer = indexer
+    
+    def get_indexer(self):
+        return self.indexer
+    
+    def extract_features(self, sentence, add_to_indexer = False):
+        counter = Counter()
+        stop_words = set(stopwords.words('english'))
+        sentence = [word.lower() for word in sentence if word.lower() not in stop_words]
+        for word in sentence:
+            feature_name = f'Unigram:{word}'
+            self.indexer.add_and_get_index(feature_name, add=add_to_indexer)
+            feature_index = self.indexer.index_of(feature_name)
+            if feature_index != -1:
+                counter[feature_index] += 1
+        return counter
 
 class BigramFeatureExtractor(FeatureExtractor):
     """
     Bigram feature extractor analogous to the unigram one.
     """
     def __init__(self, indexer: Indexer):
+        raise Exception("Must be implemented")
+    
+    def get_indexer(self):
+        raise Exception("Must be implemented")
+    
+    def extract_features(self, sentence, add_to_indexer = False):
         raise Exception("Must be implemented")
 
 
@@ -76,10 +104,18 @@ class PerceptronClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, feat_extractor: FeatureExtractor, weights: np.ndarray):
+        self.feat_extractor = feat_extractor
+        self.weights = weights
 
-
+    def dot_product(self, features: Counter) -> float:
+        return sum(self.weights[idx] * value for idx, value in features.items())
+    
+    def predict(self, sentence: List[str], add=False) -> int:
+        features = self.feat_extractor.extract_features(sentence, add_to_indexer=add)
+        score = self.dot_product(features)
+        return 1 if score > 0 else 0
+    
 class LogisticRegressionClassifier(SentimentClassifier):
     """
     Implement this class -- you should at least have init() and implement the predict method from the SentimentClassifier
@@ -97,8 +133,27 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     :param feat_extractor: feature extractor to use
     :return: trained PerceptronClassifier model
     """
-    raise Exception("Must be implemented")
+    weights = np.zeros(100000)
+    epochs = 10
+    classifier = PerceptronClassifier(feat_extractor, weights)
+    
+    for epoch in range(epochs):
+        print(f"Starting epoch {epoch + 1}/{epochs}")
+        np.random.shuffle(train_exs)
+        for ex in train_exs:
+            features = feat_extractor.extract_features(ex.words, add_to_indexer=True)
+            
+            score = classifier.dot_product(features)
+            prediction = 1 if score > 0 else 0
 
+            if prediction != ex.label:
+                for idx, value in features.items():
+                    if ex.label == 1:
+                        weights[idx] += value
+                    else:
+                        weights[idx] -= value
+
+    return classifier
 
 def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
     """
