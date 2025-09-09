@@ -2,6 +2,7 @@
 
 import nltk
 import numpy as np
+import string
 from nltk.corpus import stopwords
 from sentiment_data import *
 from utils import *
@@ -28,11 +29,6 @@ class FeatureExtractor(object):
         """
         raise Exception("Don't call me, call my subclasses")
 
-# Takes in a sentence like ["I", "love", "this", "movie", "it", "was", "a", "great", "movie"] 
-# and returns a feature vector like Counter({0: 1, 1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}) 
-# where the keys are the indices of the features in the indexer and the values are the counts of those features in the sentence.
-# The indexer will have keys like "Unigram:I", "Unigram:love", "Unigram:this", ...
-# and the corresponding indices will be the values in the Counter returned by extract_features.
 class UnigramFeatureExtractor(FeatureExtractor):
     """
     Extracts unigram bag-of-words features from a sentence. It's up to you to decide how you want to handle counts
@@ -46,14 +42,13 @@ class UnigramFeatureExtractor(FeatureExtractor):
     
     def extract_features(self, sentence, add_to_indexer = False):
         counter = Counter()
-        stop_words = set(stopwords.words('english'))
-        sentence = [word.lower() for word in sentence if word.lower() not in stop_words]
+
         for word in sentence:
             feature_name = f'Unigram:{word}'
-            self.indexer.add_and_get_index(feature_name, add=add_to_indexer)
-            feature_index = self.indexer.index_of(feature_name)
+            feature_index = self.indexer.add_and_get_index(feature_name, add=add_to_indexer)
             if feature_index != -1:
                 counter[feature_index] += 1
+                
         return counter
 
 class BigramFeatureExtractor(FeatureExtractor):
@@ -61,13 +56,36 @@ class BigramFeatureExtractor(FeatureExtractor):
     Bigram feature extractor analogous to the unigram one.
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.stop_words = set(stopwords.words('english'))
     
     def get_indexer(self):
-        raise Exception("Must be implemented")
+        return self.indexer
+    
+    def extract_bigrams(self, sentence):
+        bigrams = []
+        for i in range(len(sentence) - 1):
+            bigram = [sentence[i], sentence[i + 1]]
+            bigrams.append(bigram)
+        return bigrams
     
     def extract_features(self, sentence, add_to_indexer = False):
-        raise Exception("Must be implemented")
+        counter = Counter()
+        sentence = [word.lower() for word in sentence]
+
+        for i in range(len(sentence) - 1):
+            bigram = f"{sentence[i]}|{sentence[i + 1]}"
+            
+            words = bigram.split('|')
+            if all(w in self.stop_words for w in words):
+                continue
+
+            feature_name = f'Bigram:{bigram}'
+            feature_index = self.indexer.add_and_get_index(feature_name, add=add_to_indexer)
+            if feature_index != -1:
+                counter[feature_index] += 1
+        
+        return counter
 
 
 class BetterFeatureExtractor(FeatureExtractor):
@@ -75,8 +93,25 @@ class BetterFeatureExtractor(FeatureExtractor):
     Better feature extractor...try whatever you can think of!
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.stop_words = set(stopwords.words('english'))
+    
+    def get_indexer(self):
+        return self.indexer
+    
+    def extract_features(self, sentence, add_to_indexer = False):
+        counter = Counter()
+        sentence = [word.lower().strip(string.punctuation) for word in sentence]
+        sentence = [word for word in sentence if word and word not in self.stop_words] 
 
+        for word in sentence:
+            feature_name = f'Unigram:{word}'
+
+            feature_index = self.indexer.add_and_get_index(feature_name, add=add_to_indexer)
+            if feature_index != -1:
+                counter[feature_index] += 1
+                
+        return counter
 
 class SentimentClassifier(object):
     """
@@ -122,8 +157,18 @@ class LogisticRegressionClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, feat_extractor: FeatureExtractor, weights: np.ndarray):
+        self.feat_extractor = feat_extractor
+        self.weights = weights
+
+    def dot_product(self, features: Counter) -> float:
+        return sum(self.weights[idx] * value for idx, value in features.items())
+    
+    def predict(self, sentence: List[str], add=False) -> int:
+        features = self.feat_extractor.extract_features(sentence, add_to_indexer=add)
+        score = self.dot_product(features)
+        prob = 1 / (1 + np.exp(-score))
+        return 1 if prob > 0.5 else 0
 
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
@@ -138,7 +183,6 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     classifier = PerceptronClassifier(feat_extractor, weights)
     
     for epoch in range(epochs):
-        print(f"Starting epoch {epoch + 1}/{epochs}")
         np.random.shuffle(train_exs)
         for ex in train_exs:
             features = feat_extractor.extract_features(ex.words, add_to_indexer=True)
@@ -162,7 +206,25 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    raise Exception("Must be implemented")
+    weights = np.zeros(100000)
+    epochs = 10
+    classifier = LogisticRegressionClassifier(feat_extractor, weights)
+    learning_rate = 0.1
+
+    for epoch in range(epochs):
+        np.random.shuffle(train_exs)
+        for ex in train_exs:
+            features = feat_extractor.extract_features(ex.words, add_to_indexer=True)
+            prob = np.exp(classifier.dot_product(features)) / (1 + np.exp(classifier.dot_product(features)))
+            
+            update = learning_rate * (ex.label - prob)
+            for idx, value in features.items():
+                features[idx] = value * update
+
+            for idx, value in features.items():
+                weights[idx] += value
+
+    return classifier
 
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
