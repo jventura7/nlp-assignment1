@@ -42,6 +42,7 @@ class UnigramFeatureExtractor(FeatureExtractor):
     
     def extract_features(self, sentence, add_to_indexer = False):
         counter = Counter()
+        sentence = [word.lower().strip(string.punctuation) for word in sentence]
 
         for word in sentence:
             feature_name = f'Unigram:{word}'
@@ -99,10 +100,10 @@ class BetterFeatureExtractor(FeatureExtractor):
     def get_indexer(self):
         return self.indexer
     
+    # Tried removing stopwords and discarding rare words, but accuracy decreased, so I kept them in.
     def extract_features(self, sentence, add_to_indexer = False):
         counter = Counter()
         sentence = [word.lower().strip(string.punctuation) for word in sentence]
-        sentence = [word for word in sentence if word and word not in self.stop_words] 
 
         for word in sentence:
             feature_name = f'Unigram:{word}'
@@ -207,12 +208,14 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :return: trained LogisticRegressionClassifier model
     """
     weights = np.zeros(100000)
-    epochs = 10
+    epochs = 30
     classifier = LogisticRegressionClassifier(feat_extractor, weights)
-    learning_rate = 0.1
+    initial_lr= 0.1
 
     for epoch in range(epochs):
+        learning_rate = initial_lr / (1 + 0.1 * epoch)
         np.random.shuffle(train_exs)
+
         for ex in train_exs:
             features = feat_extractor.extract_features(ex.words, add_to_indexer=True)
             prob = np.exp(classifier.dot_product(features)) / (1 + np.exp(classifier.dot_product(features)))
@@ -220,9 +223,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
             update = learning_rate * (ex.label - prob)
             for idx, value in features.items():
                 features[idx] = value * update
-
-            for idx, value in features.items():
-                weights[idx] += value
+                weights[idx] += features[idx]
 
     return classifier
 
